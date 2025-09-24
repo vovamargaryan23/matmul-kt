@@ -1,13 +1,12 @@
 package com.matmul.matrix
 
-
 actual class Matrix internal actual constructor(var nativeHandle: Long) : AutoCloseable {
     init {
-        System.load("/home/user/projects/matmul-kt/backend/libmatrixjni.so")
+        NativeLoader.load()
     }
     actual constructor(rows: Int, cols: Int, data: DoubleArray?) : this(0L) {
         val arr = data ?: DoubleArray(0)
-        val h = nativeCreate(rows, cols, data)
+        val h = nativeCreate(rows, cols, arr)
         if(h == 0L) throw RuntimeException(nativeLastError() ?: "native create failed!")
         nativeHandle = h
     }
