@@ -1,10 +1,9 @@
-import org.jetbrains.kotlin.gradle.ExperimentalKotlinGradlePluginApi
-import org.jetbrains.kotlin.gradle.dsl.JvmTarget
+import org.gradle.api.tasks.Exec
+import org.gradle.api.tasks.Copy
+import org.jetbrains.kotlin.gradle.targets.native.tasks.KotlinNativeTest
 
 plugins {
     alias(libs.plugins.kotlinMultiplatform)
-//    alias(libs.plugins.androidLibrary)
-//    alias(libs.plugins.vanniktech.mavenPublish)
 }
 
 group = "com.matmul"
@@ -12,22 +11,49 @@ version = "1.0.0"
 
 kotlin {
     jvm()
-//    androidTarget {
-//        publishLibraryVariants("release")
-//        @OptIn(ExperimentalKotlinGradlePluginApi::class)
-//        compilerOptions {
-//            jvmTarget.set(JvmTarget.JVM_11)
-//        }
-//    }
-//    iosX64()
-//    iosArm64()
-//    iosSimulatorArm64()
-//    linuxX64()
+
+    mingwX64()
+    linuxX64()
+
+    mingwX64 {
+        binaries.all {
+            
+            
+            val dllPath = rootProject.file("backend/build/libmatrix.dll").absolutePath
+            linkerOpts(dllPath)
+        }
+
+        compilations["main"].cinterops.create("matrix") {
+            defFile(project.file("src/nativeInterop/matrix.def"))
+            includeDirs(project.file("${rootDir}/backend/include"))
+        }
+        compilations["test"].cinterops.create("matrix") {
+            defFile(project.file("src/nativeInterop/matrix.def"))
+            includeDirs(project.file("${rootDir}/backend/include"))
+        }
+    }
+
+    linuxX64 {
+        binaries.all {
+            
+            val libPath = rootProject.file("backend/build/libmatrix.so").absolutePath
+            linkerOpts(libPath)
+        }
+
+        compilations["main"].cinterops.create("matrix") {
+            defFile(project.file("src/nativeInterop/matrix.def"))
+            includeDirs(project.file("${rootDir}/backend/include"))
+        }
+        compilations["test"].cinterops.create("matrix") {
+            defFile(project.file("src/nativeInterop/matrix.def"))
+            includeDirs(project.file("${rootDir}/backend/include"))
+        }
+    }
 
     sourceSets {
         val commonMain by getting {
             dependencies {
-                //put your multiplatform dependencies here
+                
             }
         }
         val commonTest by getting {
@@ -38,21 +64,10 @@ kotlin {
     }
 }
 
-//android {
-//    namespace = "org.jetbrains.kotlinx.multiplatform.library.template"
-//    compileSdk = libs.versions.android.compileSdk.get().toInt()
-//    defaultConfig {
-//        minSdk = libs.versions.android.minSdk.get().toInt()
-//    }
-//    compileOptions {
-//        sourceCompatibility = JavaVersion.VERSION_11
-//        targetCompatibility = JavaVersion.VERSION_11
-//    }
-//}
-
 val backendDir = rootProject.file("backend")
 val backendBuildDir = backendDir.resolve("build")
-val backendOutputDir = "${layout.buildDirectory.get()}/nativeLibs"
+val nativeStagingDir = layout.buildDirectory.dir("nativeLibs") 
+val nativeStagingFile get() = nativeStagingDir.get().asFile
 
 fun osLibName(basename: String) = when {
     org.gradle.internal.os.OperatingSystem.current().isWindows -> "$basename.dll"
@@ -75,14 +90,90 @@ val cmakeBuild by tasks.registering(Exec::class) {
     commandLine("cmake", "--build", "build", "--config", "Release")
 }
 
-val copyNativeForJvm by tasks.registering(Copy::class) {
+val copyNativeForModule by tasks.registering(Copy::class) {
     group = "native"
-    description = "Copy native runtime shared object into jvm output"
+    description = "Copy native runtime shared objects into module build/nativeLibs"
     dependsOn(cmakeBuild)
     from(backendBuildDir)
     include(osLibName("matrix_jni"), osLibName("matrixjni"), osLibName("matrix"))
-    into(backendOutputDir)
+    into(nativeStagingDir)
 }
 
-tasks.named("compileKotlinJvm") {dependsOn(copyNativeForJvm)}
-tasks.named("jvmTest") {dependsOn(copyNativeForJvm)}
+tasks.matching { it.name.startsWith("cinterop") || it.name.startsWith("link") }.configureEach {
+    dependsOn(cmakeBuild)
+}
+
+tasks.withType(Test::class.java).configureEach {
+    dependsOn(copyNativeForModule)
+    
+    doFirst {
+        val libPath = nativeStagingFile.absolutePath
+        jvmArgs("-Djava.library.path=$libPath")
+    }
+}
+tasks.withType(JavaExec::class.java).configureEach {
+    dependsOn(copyNativeForModule)
+    doFirst {
+        val libPath = nativeStagingFile.absolutePath
+        jvmArgs("-Djava.library.path=$libPath")
+    }
+}
+
+
+tasks.withType(KotlinNativeTest::class.java).configureEach {
+    dependsOn(copyNativeForModule)
+    doFirst {
+        val libPath = nativeStagingFile.absolutePath
+        environment("LD_LIBRARY_PATH", libPath)
+        environment("DYLD_LIBRARY_PATH", libPath)
+        
+        val currentPath = System.getenv("PATH") ?: ""
+        environment("PATH", libPath + File.pathSeparator + currentPath)
+    }
+}
+
+
+tasks.matching { it.name.startsWith("link") && it.name.contains("Test") }.configureEach {
+    dependsOn(copyNativeForModule)
+    doLast {
+        val stagedDir = nativeStagingDir.get().asFile
+        if (!stagedDir.exists()) {
+            logger.lifecycle("No staged native libs found at: ${stagedDir.absolutePath}")
+            return@doLast
+        }
+
+        val binRoot = layout.buildDirectory.dir("bin").get().asFile
+        if (!binRoot.exists()) {
+            logger.lifecycle("No binaries directory found at: ${binRoot.absolutePath}")
+            return@doLast
+        }
+
+        
+        val stagedFiles = stagedDir.listFiles { f ->
+            f.isFile && (f.name.startsWith("libmatrix") ||
+                         f.name.startsWith("matrix") ||
+                         f.name.startsWith("libmatrixjni") || f.name.startsWith("matrixjni"))
+        }?.toList() ?: emptyList()
+
+        if (stagedFiles.isEmpty()) {
+            logger.lifecycle("No staged native files matched in ${stagedDir.absolutePath}")
+            return@doLast
+        }
+
+        
+        binRoot.walkTopDown().filter { it.isFile && it.name.endsWith(".kexe") }.forEach { kexeFile ->
+            val targetDir = kexeFile.parentFile
+            stagedFiles.forEach { file ->
+                copy {
+                    from(file)
+                    into(targetDir)
+                    include(file.name)
+                }
+                logger.lifecycle("Copied ${file.name} -> ${targetDir.absolutePath}")
+            }
+        }
+    }
+}
+
+tasks.named("compileKotlinJvm") { dependsOn(copyNativeForModule) }
+tasks.named("jvmTest") { dependsOn(copyNativeForModule) }

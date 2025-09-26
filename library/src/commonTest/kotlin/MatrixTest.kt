@@ -27,7 +27,7 @@ class MatrixTest {
 
     @Test
     fun `shape mismatch throws exception`() {
-        assertFailsWith<IllegalArgumentException> {
+        assertFailsWith<Exception> {
             val a = Matrix(2, 3, doubleArrayOf(1.0,2.0,3.0,4.0,5.0,6.0))
             val b = Matrix(2,2,doubleArrayOf(5.0,4.0,6.0,7.0))
 

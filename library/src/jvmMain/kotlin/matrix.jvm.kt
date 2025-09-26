@@ -1,10 +1,15 @@
 package com.matmul.matrix
 
-actual class Matrix internal actual constructor(var nativeHandle: Long) : AutoCloseable {
+
+actual class Matrix : AutoCloseable {
     init {
         NativeLoader.load()
     }
-    actual constructor(rows: Int, cols: Int, data: DoubleArray?) : this(0L) {
+    private var nativeHandle: Long = 0L
+    internal constructor(nativeHandle_: Long) {
+        nativeHandle = nativeHandle_
+    }
+    actual constructor(rows: Int, cols: Int, data: DoubleArray?): this(0L) {
         val arr = data ?: DoubleArray(0)
         val h = nativeCreate(rows, cols, arr)
         if(h == 0L) throw RuntimeException(nativeLastError() ?: "native create failed!")
@@ -36,7 +41,10 @@ actual class Matrix internal actual constructor(var nativeHandle: Long) : AutoCl
         return out
     }
     actual override fun close() {
-        nativeFree(nativeHandle)
+        if(nativeHandle != 0L) {
+            nativeFree(nativeHandle)
+            nativeHandle = 0L
+        }
     }
 }
 

@@ -1,7 +1,7 @@
 #ifndef MATMUL_MATRIX_H
 #define MATMUL_MATRIX_H
 
-#include <cstddef>
+#include <stddef.h>
 
 #ifdef __cplusplus
 extern "C" {

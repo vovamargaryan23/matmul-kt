@@ -4,7 +4,7 @@ internal object NativeLoader {
     private var loaded = false
     fun load() {
         if(loaded) return
-        System.loadLibrary("matrix_jni")
+        System.load("/home/user/projects/matmul-kt/backend/build/libmatrix_jni.so")
         loaded = true
     }
 }

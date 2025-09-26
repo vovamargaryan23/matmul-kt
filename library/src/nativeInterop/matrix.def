@@ -1,0 +1,4 @@
+headers = matrix.h
+headerFilter = matrix.h
+package = com.matmul.matrix
+compilerOpts = -I${projectDir}/backend/include
